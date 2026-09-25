@@ -120,6 +120,9 @@ void DrawBunny(const glm::vec4& position, float heading, float tilt, int surface
 glm::vec4 RectanglePosition(float distance);
 glm::vec4 DiamondPosition(float distance);
 glm::vec4 CirclePosition(float distance);
+float PathHeading(glm::vec4 (*path)(float), float distance, float speed);
+float JumpHeight(double elapsed_seconds);
+float JumpTilt(double elapsed_seconds);
 GLuint LoadShader_Vertex(const char* filename);   // Carrega um vertex shader
 GLuint LoadShader_Fragment(const char* filename); // Carrega um fragment shader
 void LoadShader(const char* filename, GLuint shader_id); // Função utilizada pelas duas acima
@@ -195,7 +198,7 @@ bool g_MiddleMouseButtonPressed = false; // Análogo para botão do meio do mous
 // efetiva da câmera é calculada dentro da função main(), dentro do loop de
 // renderização.
 float g_CameraTheta = 0.0f; // Ângulo no plano ZX em relação ao eixo Z
-float g_CameraPhi = 0.7f;   // Elevação em relação ao plano XZ (radianos)
+float g_CameraPhi = 0.62f;  // Elevação em relação ao plano XZ (radianos)
 float g_CameraDistance = 19.0f; // Distância para enquadrar a futura bandeira
 
 // Dimensões do cenário em unidades do mundo. O chão fica em Y = 0.
@@ -203,12 +206,12 @@ const float GROUND_HALF_WIDTH = 12.0f;
 const float GROUND_HALF_DEPTH = 9.0f;
 const float BUNNY_SCALE = 0.65f;
 const int GREEN_BUNNY_COUNT = 24;
-const float RECTANGLE_WIDTH = 15.0f;
-const float RECTANGLE_DEPTH = 10.5f;
+const float RECTANGLE_WIDTH = 14.0f;
+const float RECTANGLE_DEPTH = 12.5f;
 const float RECTANGLE_PERIMETER = 2.0f * (RECTANGLE_WIDTH + RECTANGLE_DEPTH);
 const int YELLOW_BUNNY_COUNT = 14;
-const float DIAMOND_HALF_WIDTH = 6.0f;
-const float DIAMOND_HALF_DEPTH = 3.9f;
+const float DIAMOND_HALF_WIDTH = 5.5f;
+const float DIAMOND_HALF_DEPTH = 4.9f;
 const float DIAMOND_SIDE_LENGTH = std::sqrt(DIAMOND_HALF_WIDTH * DIAMOND_HALF_WIDTH
                                         + DIAMOND_HALF_DEPTH * DIAMOND_HALF_DEPTH);
 const float DIAMOND_PERIMETER = 4.0f * DIAMOND_SIDE_LENGTH;
@@ -216,14 +219,36 @@ const int BLUE_BUNNY_COUNT = 8;
 const float CIRCLE_RADIUS = 1.9f;
 const float TWO_PI = 6.28318530718f;
 const float CIRCLE_PERIMETER = TWO_PI * CIRCLE_RADIUS;
+const float GREEN_SPEED = 4.275f; // Unidades do mundo por segundo
+// Mesmo tempo de volta: os percursos internos recebem velocidades menores.
+const double LAP_DURATION = RECTANGLE_PERIMETER / static_cast<double>(GREEN_SPEED);
+const float YELLOW_SPEED = static_cast<float>(DIAMOND_PERIMETER / LAP_DURATION);
+const float BLUE_SPEED = static_cast<float>(CIRCLE_PERIMETER / LAP_DURATION);
+const float JUMP_HEIGHT = 0.85f; // Altura máxima acima do chão
+const double JUMP_AIR_TIME = 2.80; // Segundos entre decolagem e aterrissagem
+const double JUMP_GROUND_TIME = 0.20; // Intervalo no chão antes do próximo salto
+const double JUMP_PHASE_STEP = 0.50; // Diferença de fase entre vizinhos, em segundos
+const float JUMP_FORWARD_TILT = 12.0f * TWO_PI / 360.0f;
+const float JUMP_BACKWARD_TILT = 38.0f * TWO_PI / 360.0f;
+const float JUMP_FORWARD_PEAK_PHASE = 0.24f; // Preparação ocupa 24% do tempo no ar
+const float JUMP_BACKWARD_PEAK_PHASE = 0.46f; // Inclinação para trás máxima perto do ápice
+const float TURN_DURATION = 0.20f; // Janela de suavização do giro nas quinas, em segundos
+const float BUNNY_FORWARD_CORRECTION = TWO_PI / 4.0f; // Frente da malha: -X -> +Z
 const float CAMERA_NEAR_PLANE = -0.1f;
 const float CAMERA_FAR_PLANE = -100.0f;
 
+// Boina em coordenadas locais da malha do coelho, sobre a testa e à frente das orelhas.
+const glm::vec4 BERET_POSITION(-0.68f, 0.57f, 0.30f, 1.0f);
+const glm::vec4 BERET_SCALE(0.40f, 0.10f, 0.34f, 0.0f);
+const float BERET_TILT = 0.25f; // Radianos em torno do Z local
+
 // Identificadores correspondentes aos definidos em shader_fragment.glsl.
+const int SPHERE = 0;
 const int BUNNY = 1;
 const int PLANE = 2;
 const int GOLD_SURFACE = 1;
 const int BLUE_PLASTIC_SURFACE = 3;
+const int RED_VELVET_SURFACE = 4;
 const int JADE_SURFACE = 6;
 
 // Calculado uma única vez a partir da malha, já considerando BUNNY_SCALE.
@@ -329,6 +354,11 @@ int main(int argc, char* argv[])
     ComputeNormals(&bunnymodel);
     BuildTrianglesAndAddToVirtualScene(&bunnymodel);
 
+    // Uma única malha de esfera é compartilhada por todas as boinas.
+    ObjModel spheremodel("../../data/sphere.obj");
+    ComputeNormals(&spheremodel);
+    BuildTrianglesAndAddToVirtualScene(&spheremodel);
+
     // Compensamos a altura da base da malha após a escala, apoiando-a no chão.
     float bunny_min_y = std::numeric_limits<float>::max();
     for (size_t i = 1; i < bunnymodel.attrib.vertices.size(); i += 3)
@@ -356,9 +386,15 @@ int main(int argc, char* argv[])
     glCullFace(GL_BACK);
     glFrontFace(GL_CCW);
 
+    // Iniciamos o relógio após carregar os recursos da cena.
+    const double animation_start = glfwGetTime();
+
     // Ficamos em um loop infinito, renderizando, até que o usuário feche a janela
     while (!glfwWindowShouldClose(window))
     {
+        // Distância absoluta: a velocidade não depende da quantidade de quadros.
+        const double elapsed_seconds = glfwGetTime() - animation_start;
+
         // Aqui executamos as operações de renderização
 
         // Definimos a cor do "fundo" do framebuffer como branco.  Tal cor é
@@ -437,22 +473,43 @@ int main(int argc, char* argv[])
         // Intervalos iguais medidos ao longo de todo o contorno, incluindo
         // o intervalo entre o último coelho e o primeiro (sem duplicar a quina).
         const float green_spacing = RECTANGLE_PERIMETER / GREEN_BUNNY_COUNT;
+        // Reduzimos a distância ainda em double para preservar precisão em
+        // execuções longas. Cada grupo reinicia ao completar seu próprio percurso.
+        const float green_offset = static_cast<float>(std::fmod(GREEN_SPEED * elapsed_seconds, RECTANGLE_PERIMETER));
         for (int i = 0; i < GREEN_BUNNY_COUNT; ++i)
         {
-            DrawBunny(RectanglePosition(i * green_spacing), 0.0f, 0.0f, JADE_SURFACE);
+            const float distance = green_offset + i * green_spacing;
+            glm::vec4 position = RectanglePosition(distance);
+            // A fase pertence ao índice do coelho, sem reiniciar ao completar a volta.
+            const double jump_time = elapsed_seconds + i * JUMP_PHASE_STEP;
+            position.y = JumpHeight(jump_time);
+            DrawBunny(position, PathHeading(RectanglePosition, distance, GREEN_SPEED), JumpTilt(jump_time), JADE_SURFACE);
         }
 
         // Losango e círculo compartilham o centro do retângulo, na origem.
         const float yellow_spacing = DIAMOND_PERIMETER / YELLOW_BUNNY_COUNT;
+        const float yellow_offset = static_cast<float>(std::fmod(YELLOW_SPEED * elapsed_seconds, DIAMOND_PERIMETER));
         for (int i = 0; i < YELLOW_BUNNY_COUNT; ++i)
         {
-            DrawBunny(DiamondPosition(i * yellow_spacing), 0.0f, 0.0f, GOLD_SURFACE);
+            const float distance = yellow_offset + i * yellow_spacing;
+            glm::vec4 position = DiamondPosition(distance);
+            const double jump_time = elapsed_seconds + i * JUMP_PHASE_STEP;
+            position.y = JumpHeight(jump_time);
+            DrawBunny(position, PathHeading(DiamondPosition, distance, YELLOW_SPEED), JumpTilt(jump_time), GOLD_SURFACE);
         }
 
         const float blue_spacing = CIRCLE_PERIMETER / BLUE_BUNNY_COUNT;
+        const float blue_offset = static_cast<float>(std::fmod(BLUE_SPEED * elapsed_seconds, CIRCLE_PERIMETER));
         for (int i = 0; i < BLUE_BUNNY_COUNT; ++i)
         {
-            DrawBunny(CirclePosition(i * blue_spacing), 0.0f, 0.0f, BLUE_PLASTIC_SURFACE);
+            const float distance = blue_offset + i * blue_spacing;
+            glm::vec4 position = CirclePosition(distance);
+            // Pares e ímpares alternam: no ápice de um, seus vizinhos estão no chão.
+            // Como há oito coelhos, a alternância também fecha entre o último e o primeiro.
+            const double jump_time = elapsed_seconds
+                                   + (i % 2) * (JUMP_AIR_TIME + JUMP_GROUND_TIME) / 2.0;
+            position.y = JumpHeight(jump_time);
+            DrawBunny(position, PathHeading(CirclePosition, distance, BLUE_SPEED), JumpTilt(jump_time), BLUE_PLASTIC_SURFACE);
         }
 
         // Desenhamos o plano do chão
@@ -549,8 +606,69 @@ glm::vec4 CirclePosition(float distance)
                      -CIRCLE_RADIUS * std::cos(angle), 1.0f);
 }
 
+// Usa pontos antes e depois da posição atual para obter a direção do percurso.
+// Nas retas, aponta ao longo do lado; nas quinas, mistura as duas direções.
+// No círculo, a corda simétrica tem a direção da tangente. Só a orientação
+// é suavizada: a posição continua exatamente sobre o percurso original.
+float PathHeading(glm::vec4 (*path)(float), float distance, float speed)
+{
+    const float half_turn_distance = speed * TURN_DURATION / 2.0f;
+    const glm::vec4 direction = path(distance + half_turn_distance)
+                              - path(distance - half_turn_distance);
+    return std::atan2(direction.x, direction.z);
+}
+
+// Arco parabólico: parte do chão, alcança a altura máxima na metade do voo
+// e retorna a zero. Durante o contato com o chão, a altura permanece zero.
+float JumpHeight(double elapsed_seconds)
+{
+    const double cycle_time = std::fmod(elapsed_seconds, JUMP_AIR_TIME + JUMP_GROUND_TIME);
+    if (cycle_time >= JUMP_AIR_TIME)
+        return 0.0f;
+
+    const double phase = cycle_time / JUMP_AIR_TIME;
+    return static_cast<float>(4.0 * JUMP_HEIGHT * phase * (1.0 - phase));
+}
+
+// Preparação para a frente, giro rápido para trás e retorno à postura normal.
+// A fase temporal distingue subida e descida mesmo quando têm a mesma altura.
+// Com a frente em +Z, ângulos positivos em X abaixam a frente; negativos a elevam.
+float JumpTilt(double elapsed_seconds)
+{
+    const double cycle_time = std::fmod(elapsed_seconds, JUMP_AIR_TIME + JUMP_GROUND_TIME);
+    if (cycle_time >= JUMP_AIR_TIME)
+        return 0.0f;
+
+    const float phase = static_cast<float>(cycle_time / JUMP_AIR_TIME);
+    float start_angle, end_angle, t;
+    if (phase < JUMP_FORWARD_PEAK_PHASE)
+    {
+        start_angle = 0.0f;
+        end_angle = JUMP_FORWARD_TILT;
+        t = phase / JUMP_FORWARD_PEAK_PHASE;
+    }
+    else if (phase < JUMP_BACKWARD_PEAK_PHASE)
+    {
+        start_angle = JUMP_FORWARD_TILT;
+        end_angle = -JUMP_BACKWARD_TILT;
+        t = (phase - JUMP_FORWARD_PEAK_PHASE)
+          / (JUMP_BACKWARD_PEAK_PHASE - JUMP_FORWARD_PEAK_PHASE);
+    }
+    else
+    {
+        start_angle = -JUMP_BACKWARD_TILT;
+        end_angle = 0.0f;
+        t = (phase - JUMP_BACKWARD_PEAK_PHASE) / (1.0f - JUMP_BACKWARD_PEAK_PHASE);
+    }
+
+    // Smoothstep evita estalos nas junções, mantendo a mudança de direção rápida.
+    const float blend = t * t * (3.0f - 2.0f * t);
+    return start_angle + (end_angle - start_angle) * blend;
+}
+
 // position indica a base do coelho no mundo: Y = 0 o apoia no chão.
 // Ângulos em radianos: heading gira em Y; tilt inclina em torno do X local.
+// heading = 0 aponta para +Z, após a correção da orientação original da malha.
 // A compensação da base ocorre antes das rotações, mantendo o pivô na base.
 // O programa de GPU e as matrizes view/projection devem estar ativos.
 void DrawBunny(const glm::vec4& position, float heading, float tilt, int surface_type)
@@ -558,6 +676,7 @@ void DrawBunny(const glm::vec4& position, float heading, float tilt, int surface
     const glm::mat4 model = Matrix_Translate(position.x, position.y, position.z)
                           * Matrix_Rotate_Y(heading)
                           * Matrix_Rotate_X(tilt)
+                          * Matrix_Rotate_Y(BUNNY_FORWARD_CORRECTION)
                           * Matrix_Translate(0.0f, g_BunnyGroundOffset, 0.0f)
                           * Matrix_Scale(BUNNY_SCALE, BUNNY_SCALE, BUNNY_SCALE);
 
@@ -565,6 +684,16 @@ void DrawBunny(const glm::vec4& position, float heading, float tilt, int surface
     glUniform1i(g_object_id_uniform, BUNNY);
     glUniform1i(g_surface_type_uniform, surface_type);
     DrawVirtualObject("the_bunny");
+
+    // A boina herda escala, orientação, salto e inclinação do coelho.
+    const glm::mat4 beret_model = model
+                               * Matrix_Translate(BERET_POSITION.x, BERET_POSITION.y, BERET_POSITION.z)
+                               * Matrix_Rotate_Z(BERET_TILT)
+                               * Matrix_Scale(BERET_SCALE.x, BERET_SCALE.y, BERET_SCALE.z);
+    glUniformMatrix4fv(g_model_uniform, 1, GL_FALSE, glm::value_ptr(beret_model));
+    glUniform1i(g_object_id_uniform, SPHERE);
+    glUniform1i(g_surface_type_uniform, RED_VELVET_SURFACE);
+    DrawVirtualObject("the_sphere");
 }
 
 // Função que desenha um objeto armazenado em g_VirtualScene. Veja definição
