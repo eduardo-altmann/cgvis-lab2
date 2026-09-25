@@ -116,6 +116,7 @@ void BuildTrianglesAndAddToVirtualScene(ObjModel*); // Constrói representação
 void ComputeNormals(ObjModel* model); // Computa normais de um ObjModel, caso não existam.
 void LoadShadersFromFiles(); // Carrega os shaders de vértice e fragmento, criando um programa de GPU
 void DrawVirtualObject(const char* object_name); // Desenha um objeto armazenado em g_VirtualScene
+void DrawBunny(const glm::vec4& position, float heading, float tilt, int surface_type);
 GLuint LoadShader_Vertex(const char* filename);   // Carrega um vertex shader
 GLuint LoadShader_Fragment(const char* filename); // Carrega um fragment shader
 void LoadShader(const char* filename, GLuint shader_id); // Função utilizada pelas duas acima
@@ -198,6 +199,20 @@ float g_CameraDistance = 26.0f; // Distância para enquadrar a futura bandeira
 const float GROUND_HALF_WIDTH = 12.0f;
 const float GROUND_HALF_DEPTH = 9.0f;
 const float BUNNY_SCALE = 0.65f;
+const float BUNNY_SPACING = 3.0f;
+const float CAMERA_NEAR_PLANE = -0.1f;
+const float CAMERA_FAR_PLANE = -100.0f;
+
+// Identificadores correspondentes aos definidos em shader_fragment.glsl.
+const int BUNNY = 1;
+const int PLANE = 2;
+const int GOLD_SURFACE = 1;
+const int BLUE_PLASTIC_SURFACE = 3;
+const int JADE_SURFACE = 6;
+const int BUNNY_SURFACES[] = { JADE_SURFACE, GOLD_SURFACE, BLUE_PLASTIC_SURFACE };
+
+// Calculado uma única vez a partir da malha, já considerando BUNNY_SCALE.
+float g_BunnyGroundOffset = 0.0f;
 
 // Variáveis que controlam rotação do antebraço
 float g_ForearmAngleZ = 0.0f;
@@ -303,7 +318,7 @@ int main(int argc, char* argv[])
     float bunny_min_y = std::numeric_limits<float>::max();
     for (size_t i = 1; i < bunnymodel.attrib.vertices.size(); i += 3)
         bunny_min_y = std::min(bunny_min_y, bunnymodel.attrib.vertices[i]);
-    const float bunny_ground_offset = -BUNNY_SCALE * bunny_min_y;
+    g_BunnyGroundOffset = -BUNNY_SCALE * bunny_min_y;
 
     ObjModel planemodel("../../data/plane.obj");
     ComputeNormals(&planemodel);
@@ -372,8 +387,8 @@ int main(int argc, char* argv[])
 
         // Note que, no sistema de coordenadas da câmera, os planos near e far
         // estão no sentido negativo! Veja slides 176-204 do documento Aula_09_Projecoes.pdf.
-        float nearplane = -0.1f;  // Posição do "near plane"
-        float farplane  = -100.0f; // Inclui o chão inteiro com a câmera afastada
+        float nearplane = CAMERA_NEAR_PLANE;
+        float farplane  = CAMERA_FAR_PLANE;
 
         if (g_UsePerspectiveProjection)
         {
@@ -404,27 +419,12 @@ int main(int argc, char* argv[])
         glUniformMatrix4fv(g_view_uniform       , 1 , GL_FALSE , glm::value_ptr(view));
         glUniformMatrix4fv(g_projection_uniform , 1 , GL_FALSE , glm::value_ptr(projection));
 
-        #define BUNNY  1
-        #define PLANE  2
-
-        #define GOLD_SURFACE         1
-        #define BLUE_PLASTIC_SURFACE 3
-        #define JADE_SURFACE         6
-
         // Desenhamos três coelhos com as cores verde, dourada e azul.
-        const int bunny_surfaces[3] = {
-            JADE_SURFACE,
-            GOLD_SURFACE,
-            BLUE_PLASTIC_SURFACE
-        };
-        for (int i = 0; i < 3; ++i)
+        const int bunny_count = sizeof(BUNNY_SURFACES) / sizeof(BUNNY_SURFACES[0]);
+        for (int i = 0; i < bunny_count; ++i)
         {
-            model = Matrix_Translate(3.0f * (i - 1), bunny_ground_offset, 0.0f)
-                  * Matrix_Scale(BUNNY_SCALE, BUNNY_SCALE, BUNNY_SCALE);
-            glUniformMatrix4fv(g_model_uniform, 1 , GL_FALSE , glm::value_ptr(model));
-            glUniform1i(g_object_id_uniform, BUNNY);
-            glUniform1i(g_surface_type_uniform, bunny_surfaces[i]);
-            DrawVirtualObject("the_bunny");
+            const float x = BUNNY_SPACING * (i - (bunny_count - 1) / 2.0f);
+            DrawBunny(glm::vec4(x, 0.0f, 0.0f, 1.0f), 0.0f, 0.0f, BUNNY_SURFACES[i]);
         }
 
         // Desenhamos o plano do chão
@@ -464,6 +464,24 @@ int main(int argc, char* argv[])
 
     // Fim do programa
     return 0;
+}
+
+// position indica a base do coelho no mundo: Y = 0 o apoia no chão.
+// Ângulos em radianos: heading gira em Y; tilt inclina em torno do X local.
+// A compensação da base ocorre antes das rotações, mantendo o pivô na base.
+// O programa de GPU e as matrizes view/projection devem estar ativos.
+void DrawBunny(const glm::vec4& position, float heading, float tilt, int surface_type)
+{
+    const glm::mat4 model = Matrix_Translate(position.x, position.y, position.z)
+                          * Matrix_Rotate_Y(heading)
+                          * Matrix_Rotate_X(tilt)
+                          * Matrix_Translate(0.0f, g_BunnyGroundOffset, 0.0f)
+                          * Matrix_Scale(BUNNY_SCALE, BUNNY_SCALE, BUNNY_SCALE);
+
+    glUniformMatrix4fv(g_model_uniform, 1, GL_FALSE, glm::value_ptr(model));
+    glUniform1i(g_object_id_uniform, BUNNY);
+    glUniform1i(g_surface_type_uniform, surface_type);
+    DrawVirtualObject("the_bunny");
 }
 
 // Função que desenha um objeto armazenado em g_VirtualScene. Veja definição
