@@ -118,6 +118,8 @@ void LoadShadersFromFiles(); // Carrega os shaders de vértice e fragmento, cria
 void DrawVirtualObject(const char* object_name); // Desenha um objeto armazenado em g_VirtualScene
 void DrawBunny(const glm::vec4& position, float heading, float tilt, int surface_type);
 glm::vec4 RectanglePosition(float distance);
+glm::vec4 DiamondPosition(float distance);
+glm::vec4 CirclePosition(float distance);
 GLuint LoadShader_Vertex(const char* filename);   // Carrega um vertex shader
 GLuint LoadShader_Fragment(const char* filename); // Carrega um fragment shader
 void LoadShader(const char* filename, GLuint shader_id); // Função utilizada pelas duas acima
@@ -200,11 +202,20 @@ float g_CameraDistance = 19.0f; // Distância para enquadrar a futura bandeira
 const float GROUND_HALF_WIDTH = 12.0f;
 const float GROUND_HALF_DEPTH = 9.0f;
 const float BUNNY_SCALE = 0.65f;
-const float BUNNY_SPACING = 3.0f;
 const int GREEN_BUNNY_COUNT = 24;
 const float RECTANGLE_WIDTH = 15.0f;
 const float RECTANGLE_DEPTH = 10.5f;
 const float RECTANGLE_PERIMETER = 2.0f * (RECTANGLE_WIDTH + RECTANGLE_DEPTH);
+const int YELLOW_BUNNY_COUNT = 14;
+const float DIAMOND_HALF_WIDTH = 6.0f;
+const float DIAMOND_HALF_DEPTH = 3.9f;
+const float DIAMOND_SIDE_LENGTH = std::sqrt(DIAMOND_HALF_WIDTH * DIAMOND_HALF_WIDTH
+                                        + DIAMOND_HALF_DEPTH * DIAMOND_HALF_DEPTH);
+const float DIAMOND_PERIMETER = 4.0f * DIAMOND_SIDE_LENGTH;
+const int BLUE_BUNNY_COUNT = 8;
+const float CIRCLE_RADIUS = 1.9f;
+const float TWO_PI = 6.28318530718f;
+const float CIRCLE_PERIMETER = TWO_PI * CIRCLE_RADIUS;
 const float CAMERA_NEAR_PLANE = -0.1f;
 const float CAMERA_FAR_PLANE = -100.0f;
 
@@ -431,9 +442,18 @@ int main(int argc, char* argv[])
             DrawBunny(RectanglePosition(i * green_spacing), 0.0f, 0.0f, JADE_SURFACE);
         }
 
-        // Os grupos internos serão montados na próxima etapa.
-        DrawBunny(glm::vec4(0.0f, 0.0f, 0.0f, 1.0f), 0.0f, 0.0f, GOLD_SURFACE);
-        DrawBunny(glm::vec4(BUNNY_SPACING, 0.0f, 0.0f, 1.0f), 0.0f, 0.0f, BLUE_PLASTIC_SURFACE);
+        // Losango e círculo compartilham o centro do retângulo, na origem.
+        const float yellow_spacing = DIAMOND_PERIMETER / YELLOW_BUNNY_COUNT;
+        for (int i = 0; i < YELLOW_BUNNY_COUNT; ++i)
+        {
+            DrawBunny(DiamondPosition(i * yellow_spacing), 0.0f, 0.0f, GOLD_SURFACE);
+        }
+
+        const float blue_spacing = CIRCLE_PERIMETER / BLUE_BUNNY_COUNT;
+        for (int i = 0; i < BLUE_BUNNY_COUNT; ++i)
+        {
+            DrawBunny(CirclePosition(i * blue_spacing), 0.0f, 0.0f, BLUE_PLASTIC_SURFACE);
+        }
 
         // Desenhamos o plano do chão
         model = Matrix_Scale(GROUND_HALF_WIDTH, 1.0f, GROUND_HALF_DEPTH);
@@ -499,6 +519,34 @@ glm::vec4 RectanglePosition(float distance)
     d -= RECTANGLE_WIDTH;
 
     return glm::vec4(-half_width, 0.0f, half_depth - d, 1.0f);
+}
+
+// Interpolação ao longo dos quatro lados, começando na ponta de trás (-Z).
+// A ordem dos vértices mantém o mesmo sentido horário do retângulo.
+glm::vec4 DiamondPosition(float distance)
+{
+    float d = std::fmod(distance, DIAMOND_PERIMETER);
+    if (d < 0.0f)
+        d += DIAMOND_PERIMETER;
+
+    const glm::vec4 corners[] = {
+        glm::vec4(0.0f, 0.0f, -DIAMOND_HALF_DEPTH, 1.0f),
+        glm::vec4(DIAMOND_HALF_WIDTH, 0.0f, 0.0f, 1.0f),
+        glm::vec4(0.0f, 0.0f, DIAMOND_HALF_DEPTH, 1.0f),
+        glm::vec4(-DIAMOND_HALF_WIDTH, 0.0f, 0.0f, 1.0f)
+    };
+    const int side = std::min(static_cast<int>(d / DIAMOND_SIDE_LENGTH), 3);
+    const float t = (d - side * DIAMOND_SIDE_LENGTH) / DIAMOND_SIDE_LENGTH;
+    return (1.0f - t) * corners[side] + t * corners[(side + 1) % 4];
+}
+
+// Distâncias iguais sobre a circunferência correspondem a ângulos iguais.
+// Começa em -Z e avança para +X, em sentido horário visto de cima.
+glm::vec4 CirclePosition(float distance)
+{
+    const float angle = std::fmod(distance, CIRCLE_PERIMETER) / CIRCLE_RADIUS;
+    return glm::vec4(CIRCLE_RADIUS * std::sin(angle), 0.0f,
+                     -CIRCLE_RADIUS * std::cos(angle), 1.0f);
 }
 
 // position indica a base do coelho no mundo: Y = 0 o apoia no chão.
