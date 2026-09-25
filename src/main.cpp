@@ -117,6 +117,7 @@ void ComputeNormals(ObjModel* model); // Computa normais de um ObjModel, caso n�
 void LoadShadersFromFiles(); // Carrega os shaders de vértice e fragmento, criando um programa de GPU
 void DrawVirtualObject(const char* object_name); // Desenha um objeto armazenado em g_VirtualScene
 void DrawBunny(const glm::vec4& position, float heading, float tilt, int surface_type);
+glm::vec4 RectanglePosition(float distance);
 GLuint LoadShader_Vertex(const char* filename);   // Carrega um vertex shader
 GLuint LoadShader_Fragment(const char* filename); // Carrega um fragment shader
 void LoadShader(const char* filename, GLuint shader_id); // Função utilizada pelas duas acima
@@ -193,13 +194,17 @@ bool g_MiddleMouseButtonPressed = false; // Análogo para botão do meio do mous
 // renderização.
 float g_CameraTheta = 0.0f; // Ângulo no plano ZX em relação ao eixo Z
 float g_CameraPhi = 0.7f;   // Elevação em relação ao plano XZ (radianos)
-float g_CameraDistance = 26.0f; // Distância para enquadrar a futura bandeira
+float g_CameraDistance = 19.0f; // Distância para enquadrar a futura bandeira
 
 // Dimensões do cenário em unidades do mundo. O chão fica em Y = 0.
 const float GROUND_HALF_WIDTH = 12.0f;
 const float GROUND_HALF_DEPTH = 9.0f;
 const float BUNNY_SCALE = 0.65f;
 const float BUNNY_SPACING = 3.0f;
+const int GREEN_BUNNY_COUNT = 24;
+const float RECTANGLE_WIDTH = 15.0f;
+const float RECTANGLE_DEPTH = 10.5f;
+const float RECTANGLE_PERIMETER = 2.0f * (RECTANGLE_WIDTH + RECTANGLE_DEPTH);
 const float CAMERA_NEAR_PLANE = -0.1f;
 const float CAMERA_FAR_PLANE = -100.0f;
 
@@ -209,7 +214,6 @@ const int PLANE = 2;
 const int GOLD_SURFACE = 1;
 const int BLUE_PLASTIC_SURFACE = 3;
 const int JADE_SURFACE = 6;
-const int BUNNY_SURFACES[] = { JADE_SURFACE, GOLD_SURFACE, BLUE_PLASTIC_SURFACE };
 
 // Calculado uma única vez a partir da malha, já considerando BUNNY_SCALE.
 float g_BunnyGroundOffset = 0.0f;
@@ -419,13 +423,17 @@ int main(int argc, char* argv[])
         glUniformMatrix4fv(g_view_uniform       , 1 , GL_FALSE , glm::value_ptr(view));
         glUniformMatrix4fv(g_projection_uniform , 1 , GL_FALSE , glm::value_ptr(projection));
 
-        // Desenhamos três coelhos com as cores verde, dourada e azul.
-        const int bunny_count = sizeof(BUNNY_SURFACES) / sizeof(BUNNY_SURFACES[0]);
-        for (int i = 0; i < bunny_count; ++i)
+        // Intervalos iguais medidos ao longo de todo o contorno, incluindo
+        // o intervalo entre o último coelho e o primeiro (sem duplicar a quina).
+        const float green_spacing = RECTANGLE_PERIMETER / GREEN_BUNNY_COUNT;
+        for (int i = 0; i < GREEN_BUNNY_COUNT; ++i)
         {
-            const float x = BUNNY_SPACING * (i - (bunny_count - 1) / 2.0f);
-            DrawBunny(glm::vec4(x, 0.0f, 0.0f, 1.0f), 0.0f, 0.0f, BUNNY_SURFACES[i]);
+            DrawBunny(RectanglePosition(i * green_spacing), 0.0f, 0.0f, JADE_SURFACE);
         }
+
+        // Os grupos internos serão montados na próxima etapa.
+        DrawBunny(glm::vec4(0.0f, 0.0f, 0.0f, 1.0f), 0.0f, 0.0f, GOLD_SURFACE);
+        DrawBunny(glm::vec4(BUNNY_SPACING, 0.0f, 0.0f, 1.0f), 0.0f, 0.0f, BLUE_PLASTIC_SURFACE);
 
         // Desenhamos o plano do chão
         model = Matrix_Scale(GROUND_HALF_WIDTH, 1.0f, GROUND_HALF_DEPTH);
@@ -464,6 +472,33 @@ int main(int argc, char* argv[])
 
     // Fim do programa
     return 0;
+}
+
+// Percurso no plano XZ, em sentido horário visto de cima (com -Z para cima).
+// Começa na quina (-largura/2, -profundidade/2) e percorre cada lado pela
+// sua extensão real, para que a distância não dependa do comprimento do lado.
+glm::vec4 RectanglePosition(float distance)
+{
+    float d = std::fmod(distance, RECTANGLE_PERIMETER);
+    if (d < 0.0f)
+        d += RECTANGLE_PERIMETER;
+
+    const float half_width = RECTANGLE_WIDTH / 2.0f;
+    const float half_depth = RECTANGLE_DEPTH / 2.0f;
+
+    if (d < RECTANGLE_WIDTH)
+        return glm::vec4(-half_width + d, 0.0f, -half_depth, 1.0f);
+    d -= RECTANGLE_WIDTH;
+
+    if (d < RECTANGLE_DEPTH)
+        return glm::vec4(half_width, 0.0f, -half_depth + d, 1.0f);
+    d -= RECTANGLE_DEPTH;
+
+    if (d < RECTANGLE_WIDTH)
+        return glm::vec4(half_width - d, 0.0f, half_depth, 1.0f);
+    d -= RECTANGLE_WIDTH;
+
+    return glm::vec4(-half_width, 0.0f, half_depth - d, 1.0f);
 }
 
 // position indica a base do coelho no mundo: Y = 0 o apoia no chão.
