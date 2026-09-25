@@ -191,8 +191,13 @@ bool g_MiddleMouseButtonPressed = false; // Análogo para botão do meio do mous
 // efetiva da câmera é calculada dentro da função main(), dentro do loop de
 // renderização.
 float g_CameraTheta = 0.0f; // Ângulo no plano ZX em relação ao eixo Z
-float g_CameraPhi = 0.3f;   // Ângulo em relação ao eixo Y
-float g_CameraDistance = 3.5f; // Distância da câmera para a origem
+float g_CameraPhi = 0.7f;   // Elevação em relação ao plano XZ (radianos)
+float g_CameraDistance = 26.0f; // Distância para enquadrar a futura bandeira
+
+// Dimensões do cenário em unidades do mundo. O chão fica em Y = 0.
+const float GROUND_HALF_WIDTH = 12.0f;
+const float GROUND_HALF_DEPTH = 9.0f;
+const float BUNNY_SCALE = 0.65f;
 
 // Variáveis que controlam rotação do antebraço
 float g_ForearmAngleZ = 0.0f;
@@ -245,7 +250,7 @@ int main(int argc, char* argv[])
     // Criamos uma janela do sistema operacional, com 800 colunas e 600 linhas
     // de pixels, e com título "INF01047 ...".
     GLFWwindow* window;
-    window = glfwCreateWindow(800, 600, "INF01047 - Seu Cartao - Seu Nome", NULL, NULL);
+    window = glfwCreateWindow(800, 600, "INF01047 - 594993 - Eduardo Altmann de Bem", NULL, NULL);
     if (!window)
     {
         glfwTerminate();
@@ -290,13 +295,15 @@ int main(int argc, char* argv[])
     LoadShadersFromFiles();
 
     // Construímos a representação de objetos geométricos através de malhas de triângulos
-    ObjModel spheremodel("../../data/sphere.obj");
-    ComputeNormals(&spheremodel);
-    BuildTrianglesAndAddToVirtualScene(&spheremodel);
-
     ObjModel bunnymodel("../../data/bunny.obj");
     ComputeNormals(&bunnymodel);
     BuildTrianglesAndAddToVirtualScene(&bunnymodel);
+
+    // Compensamos a altura da base da malha após a escala, apoiando-a no chão.
+    float bunny_min_y = std::numeric_limits<float>::max();
+    for (size_t i = 1; i < bunnymodel.attrib.vertices.size(); i += 3)
+        bunny_min_y = std::min(bunny_min_y, bunnymodel.attrib.vertices[i]);
+    const float bunny_ground_offset = -BUNNY_SCALE * bunny_min_y;
 
     ObjModel planemodel("../../data/plane.obj");
     ComputeNormals(&planemodel);
@@ -366,7 +373,7 @@ int main(int argc, char* argv[])
         // Note que, no sistema de coordenadas da câmera, os planos near e far
         // estão no sentido negativo! Veja slides 176-204 do documento Aula_09_Projecoes.pdf.
         float nearplane = -0.1f;  // Posição do "near plane"
-        float farplane  = -10.0f; // Posição do "far plane"
+        float farplane  = -100.0f; // Inclui o chão inteiro com a câmera afastada
 
         if (g_UsePerspectiveProjection)
         {
@@ -397,21 +404,12 @@ int main(int argc, char* argv[])
         glUniformMatrix4fv(g_view_uniform       , 1 , GL_FALSE , glm::value_ptr(view));
         glUniformMatrix4fv(g_projection_uniform , 1 , GL_FALSE , glm::value_ptr(projection));
 
-        #define SPHERE 0
         #define BUNNY  1
         #define PLANE  2
 
         #define GOLD_SURFACE         1
         #define BLUE_PLASTIC_SURFACE 3
-        #define RED_VELVET_SURFACE   4
         #define JADE_SURFACE         6
-
-        // Desenhamos o modelo da esfera
-        model = Matrix_Translate(-2.0f,0.0f,0.0f);
-        glUniformMatrix4fv(g_model_uniform, 1 , GL_FALSE , glm::value_ptr(model));
-        glUniform1i(g_object_id_uniform, SPHERE);
-        glUniform1i(g_surface_type_uniform, RED_VELVET_SURFACE);
-        DrawVirtualObject("the_sphere");
 
         // Desenhamos três coelhos com as cores verde, dourada e azul.
         const int bunny_surfaces[3] = {
@@ -421,7 +419,8 @@ int main(int argc, char* argv[])
         };
         for (int i = 0; i < 3; ++i)
         {
-            model = Matrix_Translate(2.0f * i,0.0f,0.0f);
+            model = Matrix_Translate(3.0f * (i - 1), bunny_ground_offset, 0.0f)
+                  * Matrix_Scale(BUNNY_SCALE, BUNNY_SCALE, BUNNY_SCALE);
             glUniformMatrix4fv(g_model_uniform, 1 , GL_FALSE , glm::value_ptr(model));
             glUniform1i(g_object_id_uniform, BUNNY);
             glUniform1i(g_surface_type_uniform, bunny_surfaces[i]);
@@ -429,7 +428,7 @@ int main(int argc, char* argv[])
         }
 
         // Desenhamos o plano do chão
-        model = Matrix_Translate(0.0f,-1.0f,0.0f) * Matrix_Scale(4.0f,1.0f,4.0f);
+        model = Matrix_Scale(GROUND_HALF_WIDTH, 1.0f, GROUND_HALF_DEPTH);
         glUniformMatrix4fv(g_model_uniform, 1 , GL_FALSE , glm::value_ptr(model));
         glUniform1i(g_object_id_uniform, PLANE);
         DrawVirtualObject("the_plane");
@@ -1500,4 +1499,3 @@ void PrintObjModelInfo(ObjModel* model)
 
 // set makeprg=cd\ ..\ &&\ make\ run\ >/dev/null
 // vim: set spell spelllang=pt_br :
-
